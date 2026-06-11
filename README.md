@@ -25,8 +25,15 @@ per `/model claude` (bzw. `/model gpt`) wechselst du auf Cloud-Inferenz.
 | `Ctrl+P` oder `/` (auf leerer Zeile) | Command-Bar öffnen |
 | `Tab` | Ghost-Vorschlag übernehmen / Befehl vervollständigen |
 | `Esc` | Ghost-Vorschlag verwerfen / Command-Bar schließen |
+| `Ctrl+Z` / `Ctrl+Y` | Rückgängig / Wiederholen (auch für KI-Änderungen) |
 | `Ctrl+S` | Puffer ins Wiki speichern (mit Auto-Titel/-Tags/-Summary) |
 | `Ctrl+Q` | Beenden |
+
+**Transformationen ersetzen den Puffer nie direkt:** Das Ergebnis von
+`/lang`, `/style`, `/summarize`, `/todo` und `/expand` erscheint als
+Wort-Diff-Vorschau (grün = neu, rot durchgestrichen = entfernt) und wird
+erst mit `Enter` übernommen – `Esc` verwirft. Jede übernommene KI-Änderung
+ist per `Ctrl+Z` widerrufbar.
 
 ### Befehle
 
@@ -96,6 +103,7 @@ aufgebaut – die Dateien selbst bleiben die einzige Source of Truth.
 
 ## Roadmap
 
+- [x] Diff-Vorschau + Undo/Redo für alle KI-Transformationen
 - [ ] Inline-Ghost-Rendering direkt in der Zeile (statt Vorschlags-Panel)
 - [ ] Context Sniffer für Einfügen aus der Zwischenablage (Bracketed Paste)
 - [ ] Persistenter Embedding-Cache (`.vibe/index.json`) statt Rebuild beim Start

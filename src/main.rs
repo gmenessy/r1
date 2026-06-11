@@ -10,6 +10,7 @@
 mod app;
 mod buffer;
 mod commands;
+mod diff;
 mod events;
 mod llm;
 mod ui;

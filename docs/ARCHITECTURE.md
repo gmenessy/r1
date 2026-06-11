@@ -68,10 +68,19 @@ dieselbe Invariante erneut.
 
 ### Stabilitätsgarantie (NFR)
 
-Puffer-Transformationen folgen dem Muster *replace-on-success*: Der Worker
-sendet `ReplaceBuffer` ausschließlich nach erfolgreicher LLM-Antwort; jeder
-Fehler (Timeout, Netzabbruch, API-Fehler, Refusal) wird zu `Error` und lässt
-den Puffer unangetastet.
+Puffer-Transformationen folgen dem Muster *propose-confirm-replace*:
+
+1. Der Worker sendet `Proposal` ausschließlich nach erfolgreicher
+   LLM-Antwort; jeder Fehler (Timeout, Netzabbruch, API-Fehler, Refusal)
+   wird zu `Error` und lässt den Puffer unangetastet.
+2. Die UI zeigt den Vorschlag als Wort-Diff (LCS über Token, `src/diff.rs`)
+   und ersetzt den Puffer erst nach Bestätigung per Enter. Bei sehr großen
+   Texten (> 4M DP-Zellen) fällt der Diff auf eine Grob-Anzeige zurück,
+   damit der UI-Thread nie spürbar rechnet.
+3. Vor jeder Übernahme (Transformation wie Ghost-Korrektur) wird ein
+   Snapshot auf den Undo-Stack gelegt – `Ctrl+Z` widerruft jede KI-Änderung
+   in genau einem Schritt. Tipp-Eingaben werden zeitlich koalesziert
+   (800 ms-Fenster), der Stack ist auf 200 Einträge begrenzt.
 
 ## Modell-Schicht
 

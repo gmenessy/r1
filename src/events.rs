@@ -34,8 +34,9 @@ pub enum AppEvent {
         original: String,
         corrected: String,
     },
-    /// Ergebnis einer Transformation ersetzt den Puffer.
-    ReplaceBuffer { text: String, notice: String },
+    /// Ergebnis einer Transformation – die UI zeigt es als Diff-Vorschau
+    /// und übernimmt es erst nach Bestätigung (Enter).
+    Proposal { text: String, notice: String },
     /// Proaktive RAG-Treffer aus dem Wiki.
     WikiHints(Vec<WikiHint>),
     /// Eintrag gespeichert.

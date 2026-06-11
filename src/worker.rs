@@ -176,7 +176,8 @@ fn handle_command(
     }
 }
 
-/// Puffer-Transformation: Ersetzung NUR bei Erfolg – ein abgebrochener
+/// Puffer-Transformation: Das Ergebnis geht als Vorschlag (Diff-Vorschau)
+/// an die UI – ersetzt wird erst nach Bestätigung, und ein abgebrochener
 /// Cloud-Call darf den Puffer niemals verlieren (Stabilitäts-NFR).
 fn transform(
     llm: &Llm,
@@ -194,7 +195,7 @@ fn transform(
     tokio::spawn(async move {
         match llm.complete(&system, &text).await {
             Ok(result) => {
-                let _ = tx.send(AppEvent::ReplaceBuffer { text: result, notice });
+                let _ = tx.send(AppEvent::Proposal { text: result, notice });
             }
             Err(e) => {
                 let _ = tx.send(AppEvent::Error(e.to_string()));

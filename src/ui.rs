@@ -1,10 +1,11 @@
 //! Rendering der Full-Screen-TUI (ratatui). Reines Zeichnen – kein Zustand.
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Review};
+use crate::diff::Op;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -25,7 +26,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .constraints([Constraint::Percentage(72), Constraint::Percentage(28)])
         .split(rows[0]);
 
-    draw_editor(frame, app, main[0]);
+    match &app.review {
+        Some(review) if app.mode == Mode::Review => draw_review(frame, review, main[0]),
+        _ => draw_editor(frame, app, main[0]),
+    }
     draw_hints(frame, app, main[1]);
     if app.ghost.is_some() {
         draw_ghost(frame, app, rows[1]);
@@ -74,6 +78,57 @@ fn draw_editor(frame: &mut Frame, app: &App, area: Rect) {
         let y = inner.y + (app.buffer.row - scroll) as u16;
         frame.set_cursor_position(Position::new(x, y));
     }
+}
+
+/// Wort-Diff-Vorschau: grün = neu, rot durchgestrichen = entfernt.
+/// Der Puffer wird erst mit Enter ersetzt – Esc verwirft den Vorschlag.
+fn draw_review(frame: &mut Frame, review: &Review, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(
+            " Vorschau · {} — Enter übernehmen · Esc verwerfen ",
+            review.notice
+        ))
+        .border_style(Style::default().fg(Color::Yellow));
+    let paragraph = Paragraph::new(diff_lines(&review.diff))
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .scroll((review.scroll, 0));
+    frame.render_widget(paragraph, area);
+}
+
+fn diff_lines(diff: &[(Op, String)]) -> Vec<Line<'static>> {
+    let insert = Style::default().fg(Color::Green);
+    let delete = Style::default()
+        .fg(Color::Red)
+        .add_modifier(Modifier::CROSSED_OUT);
+
+    let mut lines = Vec::new();
+    let mut spans: Vec<Span> = Vec::new();
+    for (op, text) in diff {
+        let style = match op {
+            Op::Equal => Style::default(),
+            Op::Insert => insert,
+            Op::Delete => delete,
+        };
+        let mut parts = text.split('\n').peekable();
+        while let Some(part) = parts.next() {
+            if !part.is_empty() {
+                spans.push(Span::styled(part.to_string(), style));
+            }
+            if parts.peek().is_some() {
+                if *op == Op::Delete {
+                    // Entfernter Zeilenumbruch: Marker statt echtem Umbruch,
+                    // sonst verschiebt der alte Umbruch das neue Layout.
+                    spans.push(Span::styled("⏎", delete));
+                } else {
+                    lines.push(Line::from(std::mem::take(&mut spans)));
+                }
+            }
+        }
+    }
+    lines.push(Line::from(spans));
+    lines
 }
 
 fn draw_hints(frame: &mut Frame, app: &App, area: Rect) {
