@@ -373,6 +373,10 @@ impl App {
                 self.activity = None;
                 self.status = format!("✓ Gespeichert: {path}");
             }
+            AppEvent::Exported { path } => {
+                self.activity = None;
+                self.status = format!("✓ Exportiert: {path}");
+            }
             AppEvent::ModelSwitched(label) => {
                 self.activity = None;
                 self.model = label.clone();
@@ -395,6 +399,7 @@ fn activity_label(cmd: &Command) -> &'static str {
         Command::Todo => "Extrahiert Aufgaben…",
         Command::Expand => "Formuliert aus…",
         Command::Save(_) => "Speichert…",
+        Command::Export { .. } => "Exportiert…",
         Command::Help | Command::Quit => "",
     }
 }

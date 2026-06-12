@@ -41,6 +41,8 @@ pub enum AppEvent {
     WikiHints(Vec<WikiHint>),
     /// Eintrag gespeichert.
     Saved { path: String },
+    /// Puffer exportiert (pdf/docx/html/md/txt).
+    Exported { path: String },
     /// Modellwechsel bestätigt.
     ModelSwitched(String),
     /// Fehler – Puffer bleibt unangetastet (Stabilitäts-NFR).

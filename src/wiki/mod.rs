@@ -38,7 +38,7 @@ pub struct WikiStore {
     pub dir: PathBuf,
 }
 
-fn slugify(s: &str) -> String {
+pub fn slugify(s: &str) -> String {
     let slug: String = s
         .to_lowercase()
         .chars()

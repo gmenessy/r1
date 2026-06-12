@@ -171,6 +171,19 @@ fn handle_command(
         Command::Expand => {
             transform(llm, tx, text, prompts::EXPAND.into(), "Notizen ausformuliert".into());
         }
+        Command::Export { format, target } => {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                match crate::export::export(format, &text, target.as_deref()).await {
+                    Ok(path) => {
+                        let _ = tx.send(AppEvent::Exported { path: path.display().to_string() });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(AppEvent::Error(format!("Export fehlgeschlagen: {e}")));
+                    }
+                }
+            });
+        }
         // Quit/Help werden in der UI behandelt und landen nie hier.
         Command::Quit | Command::Help => {}
     }

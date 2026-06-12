@@ -12,6 +12,7 @@ mod buffer;
 mod commands;
 mod diff;
 mod events;
+mod export;
 mod llm;
 mod ui;
 mod wiki;

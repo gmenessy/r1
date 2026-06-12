@@ -46,7 +46,14 @@ ist per `Ctrl+Z` widerrufbar.
 | `/expand` | Stichpunkte ausformulieren |
 | `/model gemma\|claude\|gpt` | Modell zur Laufzeit wechseln |
 | `/save [titel]` | In das Wiki speichern |
+| `/export pdf\|docx\|html\|md\|txt [datei]` | Puffer exportieren |
 | `/help`, `/quit` | Hilfe / Beenden |
+
+**Export:** Word (docx), HTML, Markdown und Text entstehen komplett offline
+in-process. PDF delegiert an ein installiertes [pandoc](https://pandoc.org)
+– ohne pandoc weicht man auf `/export html` aus und druckt im Browser als
+PDF. Ohne Dateinamen wird `<erste-zeile-als-slug>-<timestamp>.<ext>` im
+aktuellen Verzeichnis (bzw. `VIBE_EXPORT_DIR`) angelegt.
 
 ## Konfiguration (Umgebungsvariablen)
 
@@ -56,6 +63,7 @@ ist per `Ctrl+Z` widerrufbar.
 | `VIBE_GEMMA_MODEL` | `gemma3` | Lokales Korrektur-/Skill-Modell |
 | `VIBE_EMBED_MODEL` | `nomic-embed-text` | Embeddings für das Wiki-RAG |
 | `VIBE_WIKI_DIR` | `./vibe-wiki` | Ablageort der Wiki-Einträge |
+| `VIBE_EXPORT_DIR` | `.` | Zielordner für `/export` ohne Dateiname |
 | `ANTHROPIC_API_KEY` | – | aktiviert `/model claude` |
 | `OPENAI_API_KEY` | – | aktiviert `/model gpt` |
 

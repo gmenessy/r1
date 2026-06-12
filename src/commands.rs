@@ -9,6 +9,10 @@ pub enum Command {
     Todo,
     Expand,
     Save(Option<String>),
+    Export {
+        format: crate::export::Format,
+        target: Option<String>,
+    },
     Help,
     Quit,
 }
@@ -22,6 +26,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("todo", "Action-Items als Checkliste extrahieren"),
     ("expand", "Stichpunkte ausformulieren"),
     ("save [titel]", "Puffer ins Wiki speichern (Auto-Tags)"),
+    ("export <format> [datei]", "Puffer exportieren: pdf|docx|html|md|txt"),
     ("help", "Diese Übersicht"),
     ("quit", "Editor beenden"),
 ];
@@ -42,6 +47,18 @@ pub fn parse(input: &str) -> Result<Command, String> {
         "todo" => Ok(Command::Todo),
         "expand" => Ok(Command::Expand),
         "save" => Ok(Command::Save(if rest.is_empty() { None } else { Some(rest) })),
+        "export" => {
+            let mut args = rest.split_whitespace();
+            let format_arg = args
+                .next()
+                .ok_or("Nutzung: /export pdf|docx|html|md|txt [datei]")?;
+            let format = crate::export::Format::parse(format_arg)?;
+            let target = args.collect::<Vec<_>>().join(" ");
+            Ok(Command::Export {
+                format,
+                target: if target.is_empty() { None } else { Some(target) },
+            })
+        }
         "help" => Ok(Command::Help),
         "quit" | "q" | "exit" => Ok(Command::Quit),
         other => Err(format!("Unbekannter Befehl: /{other} – /help zeigt alle")),
@@ -92,6 +109,21 @@ mod tests {
     fn parses_save_with_and_without_title() {
         assert!(matches!(parse("save"), Ok(Command::Save(None))));
         assert!(matches!(parse("save Mein Titel"), Ok(Command::Save(Some(t))) if t == "Mein Titel"));
+    }
+
+    #[test]
+    fn parses_export_with_format_and_optional_target() {
+        use crate::export::Format;
+        assert!(matches!(
+            parse("/export pdf"),
+            Ok(Command::Export { format: Format::Pdf, target: None })
+        ));
+        assert!(matches!(
+            parse("/export word mein brief"),
+            Ok(Command::Export { format: Format::Docx, target: Some(t) }) if t == "mein brief"
+        ));
+        assert!(parse("/export").is_err());
+        assert!(parse("/export xlsx").is_err());
     }
 
     #[test]
