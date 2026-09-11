@@ -39,10 +39,36 @@ gespeichert werden, oder in einer vollständig integrierten Datenbanklösung
 
 ### Konsequenzen
 
-- Startzeit skaliert mit der Wiki-Größe (Embedding-Berechnung), bis der
-  Embedding-Cache implementiert ist.
+- Embeddings liegen in `.vibe/embeddings.json`, geschlüsselt über
+  Hash(Embedding-Modell, Inhalt). Unveränderte Einträge kosten beim Start
+  keinen Inferenz-Call; ein Modellwechsel invalidiert den Cache implizit.
 - Gleichzeitiges Schreiben durch externe Tools wird nicht überwacht (kein
   File-Watcher in v0.1) – der Index aktualisiert sich beim nächsten Start.
+
+### RAG-Query
+
+Als Suchanfrage dient das Fenster von ±6 Zeilen um den Cursor, nicht der
+Gesamttext – sonst verwässert ein langes Dokument das aktuelle Thema.
+nomic-Modelle bekommen die Task-Präfixe `search_document:` /
+`search_query:`; der Cosine-Schwellwert liegt bei 0,6, weil diese Modelle
+auch für Unverwandtes ~0,5 liefern. Lieber ein leeres Panel als Rauschen.
+
+## Datenpfad-Transparenz
+
+- Statuszeile zeigt permanent `🔒 LOKAL` oder `☁ CLOUD` (aus dem
+  `ModelSwitched`-Event, nicht aus dem Label geraten).
+- Cloud-Consent: Der erste `/model claude|gpt` pro Sitzung wird in der UI
+  abgefangen und muss wiederholt werden; erst dann geht der Befehl an den
+  Worker. Ghost-Text (`complete_local`) und Embeddings nutzen ausschließlich
+  Ollama – unabhängig vom gewählten Hauptmodell.
+- `/ghost off` schaltet die Hintergrund-Inferenz ab; eine laufende
+  Ghost-Korrektur wird bei jeder neuen Eingabe abgebrochen (`JoinHandle::abort`).
+
+## Crash-Recovery
+
+In jeder Tipp-Pause schreibt der Worker den Puffer nach `.vibe/autosave.md`.
+Ein sauberes Ende (Ctrl+Q) löscht die Datei; existiert sie beim nächsten
+Start, wird sie in den Puffer geladen.
 
 ---
 

@@ -82,6 +82,17 @@ impl Buffer {
         }
     }
 
+    /// Entf: Zeichen unter dem Cursor bzw. Zeilenumbruch am Zeilenende.
+    pub fn delete_forward(&mut self) {
+        if self.col < char_len(&self.lines[self.row]) {
+            let idx = byte_idx(&self.lines[self.row], self.col);
+            self.lines[self.row].remove(idx);
+        } else if self.row + 1 < self.lines.len() {
+            let next = self.lines.remove(self.row + 1);
+            self.lines[self.row].push_str(&next);
+        }
+    }
+
     pub fn move_left(&mut self) {
         if self.col > 0 {
             self.col -= 1;

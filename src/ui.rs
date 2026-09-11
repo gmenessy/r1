@@ -7,6 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let ghost_height = if app.ghost.is_some() { 3 } else { 0 };
@@ -43,12 +44,17 @@ pub fn draw(frame: &mut Frame, app: &App) {
 fn draw_editor(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" Vibe-Editor · {} ", app.model));
+        .title(format!(" Vibe-Editor · {} · {} ", app.file_label(), app.model));
     let inner = block.inner(area);
 
-    // Vertikales Scrolling: Cursor immer sichtbar halten.
+    // Scrolling: Cursor immer sichtbar halten – vertikal und horizontal.
     let height = inner.height.max(1) as usize;
     let scroll = app.buffer.row.saturating_sub(height - 1);
+    // Anzeigebreite bis zum Cursor (CJK/Emoji sind 2 Spalten breit).
+    let prefix: String = app.buffer.current_line().chars().take(app.buffer.col).collect();
+    let display_col = UnicodeWidthStr::width(prefix.as_str());
+    let width = inner.width.max(1) as usize;
+    let hscroll = display_col.saturating_sub(width - 1);
 
     let lines: Vec<Line> = app
         .buffer
@@ -71,10 +77,13 @@ fn draw_editor(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    frame.render_widget(
+        Paragraph::new(lines).block(block).scroll((0, hscroll as u16)),
+        area,
+    );
 
     if app.mode == Mode::Edit {
-        let x = inner.x + app.buffer.col.min(inner.width.saturating_sub(1) as usize) as u16;
+        let x = inner.x + (display_col - hscroll) as u16;
         let y = inner.y + (app.buffer.row - scroll) as u16;
         frame.set_cursor_position(Position::new(x, y));
     }
@@ -171,10 +180,22 @@ fn draw_ghost(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
-    let mut spans = vec![Span::styled(
-        format!(" {} ", app.model),
-        Style::default().fg(Color::Black).bg(Color::Cyan),
-    )];
+    // Datenpfad-Badge: Auf einen Blick sehen, ob Text das Gerät verlässt.
+    let badge = if app.cloud {
+        Span::styled(" ☁ CLOUD ", Style::default().fg(Color::Black).bg(Color::Yellow))
+    } else {
+        Span::styled(" 🔒 LOKAL ", Style::default().fg(Color::Black).bg(Color::Green))
+    };
+    let mut spans = vec![
+        badge,
+        Span::styled(
+            format!(" {} ", app.model),
+            Style::default().fg(Color::Black).bg(Color::Cyan),
+        ),
+    ];
+    if !app.ghost_enabled {
+        spans.push(Span::styled(" Ghost aus ", Style::default().fg(Color::DarkGray)));
+    }
     if let Some(activity) = &app.activity {
         spans.push(Span::styled(
             format!(" {} {} ", app.spinner_char(), activity),
@@ -182,7 +203,7 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         ));
     }
     let message = if app.status.is_empty() {
-        " Ctrl+P Befehle · / auf leerer Zeile · Tab Ghost · Ctrl+S speichern · Ctrl+Q beenden"
+        " Ctrl+P Befehle · Tab Ghost · Ctrl+Z Undo · Ctrl+S Wiki · /write Datei · Ctrl+Q beenden"
             .to_string()
     } else {
         format!(" {}", app.status)

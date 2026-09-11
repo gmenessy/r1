@@ -5,7 +5,9 @@ use crate::buffer::Buffer;
 use crate::commands::{self, Command};
 use crate::diff::{self, Op};
 use crate::events::{AppEvent, WikiHint, WorkerMsg};
+use crate::llm::is_cloud_name;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -40,20 +42,28 @@ struct Snapshot {
 /// Tipp-Bursts innerhalb dieses Fensters teilen sich einen Snapshot.
 const SNAPSHOT_COALESCE: Duration = Duration::from_millis(800);
 const MAX_UNDO: usize = 200;
+const TAB_WIDTH: usize = 4;
 
 pub struct App {
     pub buffer: Buffer,
     pub mode: Mode,
     pub cmdline: String,
-    pub completions: Vec<&'static str>,
+    pub completions: Vec<String>,
     pub ghost: Option<Ghost>,
+    pub ghost_enabled: bool,
     pub review: Option<Review>,
     pub hints: Vec<WikiHint>,
     pub status: String,
     pub activity: Option<String>,
     pub model: String,
+    /// Aktives Modell sendet Puffertexte an einen Cloud-Anbieter.
+    pub cloud: bool,
+    pub file_path: Option<PathBuf>,
+    pub skills: Vec<String>,
     pub spinner: usize,
     pub generation: u64,
+    cloud_consented: bool,
+    cloud_consent_pending: Option<String>,
     undo_stack: Vec<Snapshot>,
     redo_stack: Vec<Snapshot>,
     last_snapshot: Option<Instant>,
@@ -70,13 +80,19 @@ impl App {
             cmdline: String::new(),
             completions: Vec::new(),
             ghost: None,
+            ghost_enabled: true,
             review: None,
             hints: Vec::new(),
             status: String::new(),
             activity: None,
             model: "Gemma · lokal".into(),
+            cloud: false,
+            file_path: None,
+            skills: Vec::new(),
             spinner: 0,
             generation: 0,
+            cloud_consented: false,
+            cloud_consent_pending: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             last_snapshot: None,
@@ -92,6 +108,23 @@ impl App {
         if self.activity.is_some() {
             self.spinner = self.spinner.wrapping_add(1);
         }
+    }
+
+    pub fn file_label(&self) -> String {
+        self.file_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "(neu)".into())
+    }
+
+    /// Datei beim Start laden (CLI-Argument) – ohne Undo-Eintrag.
+    pub fn load_initial(&mut self, path: PathBuf, text: &str) {
+        self.buffer.set_text(text.trim_end_matches('\n'));
+        self.buffer.row = 0;
+        self.buffer.col = 0;
+        self.file_path = Some(path);
+        self.status = format!("✓ Geöffnet: {}", self.file_label());
     }
 
     /// `true` ⇒ Editor beenden.
@@ -111,7 +144,17 @@ impl App {
             (KeyCode::Char('s'), true) => self.run_command(Command::Save(None), "Speichert…"),
             (KeyCode::Char('z'), true) => self.undo(),
             (KeyCode::Char('y'), true) => self.redo(),
-            (KeyCode::Tab, _) => self.accept_ghost(),
+            (KeyCode::Tab, _) => {
+                if self.ghost.is_some() {
+                    self.accept_ghost();
+                } else {
+                    self.maybe_snapshot();
+                    for _ in 0..TAB_WIDTH {
+                        self.buffer.insert_char(' ');
+                    }
+                    self.on_edit();
+                }
+            }
             (KeyCode::Esc, _) => self.ghost = None,
             (KeyCode::Char('/'), false) if self.buffer.current_line().is_empty() => {
                 self.open_command_bar()
@@ -129,6 +172,11 @@ impl App {
             (KeyCode::Backspace, _) => {
                 self.maybe_snapshot();
                 self.buffer.backspace();
+                self.on_edit();
+            }
+            (KeyCode::Delete, _) => {
+                self.maybe_snapshot();
+                self.buffer.delete_forward();
                 self.on_edit();
             }
             (KeyCode::Left, _) => self.buffer.move_left(),
@@ -151,36 +199,77 @@ impl App {
             KeyCode::Enter => {
                 let input = std::mem::take(&mut self.cmdline);
                 self.mode = Mode::Edit;
-                match commands::parse(&input) {
-                    Ok(Command::Quit) => return true,
-                    Ok(Command::Help) => self.status = commands::help_text(),
-                    Ok(cmd) => {
-                        let label = activity_label(&cmd);
-                        self.run_command(cmd, label);
-                    }
-                    Err(e) => self.status = format!("✖ {e}"),
-                }
+                return self.execute(&input);
             }
             KeyCode::Tab => {
-                if let Some(full) = commands::complete_first(&self.cmdline) {
+                if let Some(full) = commands::complete_first(&self.cmdline, &self.skills) {
                     self.cmdline = full;
                     self.cmdline.push(' ');
                 }
-                self.completions = commands::completions(&self.cmdline);
+                self.refresh_completions();
             }
             KeyCode::Backspace => {
                 if self.cmdline.pop().is_none() {
                     self.mode = Mode::Edit;
                 }
-                self.completions = commands::completions(&self.cmdline);
+                self.refresh_completions();
             }
             KeyCode::Char(c) => {
                 self.cmdline.push(c);
-                self.completions = commands::completions(&self.cmdline);
+                self.refresh_completions();
             }
             _ => {}
         }
         false
+    }
+
+    /// Befehl ausführen; `true` ⇒ Editor beenden.
+    fn execute(&mut self, input: &str) -> bool {
+        match commands::parse(input, &self.skills) {
+            Ok(Command::Quit) => return true,
+            Ok(Command::Help) => self.status = commands::help_text(&self.skills),
+            Ok(Command::Ghost(on)) => {
+                self.ghost_enabled = on;
+                if !on {
+                    self.ghost = None;
+                }
+                let _ = self.to_worker.send(WorkerMsg::SetGhost(on));
+                self.status = if on { "✓ Ghost-Text an" } else { "Ghost-Text aus" }.into();
+            }
+            Ok(Command::Write(None)) => match self.file_path.clone() {
+                Some(path) => self.run_command(
+                    Command::Write(Some(path.display().to_string())),
+                    "Schreibt…",
+                ),
+                None => self.status = "✖ Keine Datei geöffnet – /write <datei>".into(),
+            },
+            Ok(Command::Model(name)) => self.switch_model(name),
+            Ok(cmd) => {
+                let label = activity_label(&cmd);
+                self.run_command(cmd, label);
+            }
+            Err(e) => self.status = format!("✖ {e}"),
+        }
+        false
+    }
+
+    /// Cloud-Consent: Der erste Wechsel auf ein Cloud-Modell pro Sitzung
+    /// muss durch Wiederholen des Befehls bestätigt werden – vorher geht
+    /// kein einziges Zeichen des Puffers nach draußen.
+    fn switch_model(&mut self, name: String) {
+        if is_cloud_name(&name) && !self.cloud_consented {
+            if self.cloud_consent_pending.as_deref() != Some(name.as_str()) {
+                self.cloud_consent_pending = Some(name.clone());
+                self.status = format!(
+                    "☁ Cloud-Modell: Puffertexte werden an den Anbieter gesendet. \
+Zum Bestätigen erneut /model {name}"
+                );
+                return;
+            }
+            self.cloud_consented = true;
+        }
+        self.cloud_consent_pending = None;
+        self.run_command(Command::Model(name), "Wechselt Modell…");
     }
 
     fn handle_review_key(&mut self, key: KeyEvent) -> bool {
@@ -193,11 +282,7 @@ impl App {
                     self.generation = self.generation.wrapping_add(1);
                     self.ghost = None;
                     self.status = format!("✓ {} übernommen · Ctrl+Z widerruft", review.notice);
-                    let _ = self.to_worker.send(WorkerMsg::TextChanged {
-                        text: self.buffer.text(),
-                        line: self.buffer.row,
-                        generation: self.generation,
-                    });
+                    self.notify_text_changed();
                 }
                 self.mode = Mode::Edit;
             }
@@ -224,7 +309,11 @@ impl App {
     fn open_command_bar(&mut self) {
         self.mode = Mode::Command;
         self.cmdline.clear();
-        self.completions = commands::completions("");
+        self.refresh_completions();
+    }
+
+    fn refresh_completions(&mut self) {
+        self.completions = commands::completions(&self.cmdline, &self.skills);
     }
 
     fn run_command(&mut self, cmd: Command, activity: &str) {
@@ -235,15 +324,19 @@ impl App {
         });
     }
 
-    /// Nach jeder Pufferänderung: Ghost invalidieren, Worker informieren.
-    fn on_edit(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
-        self.ghost = None;
+    fn notify_text_changed(&self) {
         let _ = self.to_worker.send(WorkerMsg::TextChanged {
             text: self.buffer.text(),
             line: self.buffer.row,
             generation: self.generation,
         });
+    }
+
+    /// Nach jeder Pufferänderung: Ghost invalidieren, Worker informieren.
+    fn on_edit(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.ghost = None;
+        self.notify_text_changed();
     }
 
     // --- Undo / Redo -----------------------------------------------------
@@ -286,11 +379,7 @@ impl App {
         self.ghost = None;
         // Nächste Eingabe beginnt einen frischen Undo-Eintrag.
         self.last_snapshot = None;
-        let _ = self.to_worker.send(WorkerMsg::TextChanged {
-            text: self.buffer.text(),
-            line: self.buffer.row,
-            generation: self.generation,
-        });
+        self.notify_text_changed();
     }
 
     fn undo(&mut self) {
@@ -352,7 +441,7 @@ impl App {
                     .get(line)
                     .map(|l| l == &original)
                     .unwrap_or(false);
-                if generation == self.generation && line_unchanged {
+                if self.ghost_enabled && generation == self.generation && line_unchanged {
                     self.ghost = Some(Ghost { line, original, corrected });
                 }
             }
@@ -377,11 +466,31 @@ impl App {
                 self.activity = None;
                 self.status = format!("✓ Exportiert: {path}");
             }
-            AppEvent::ModelSwitched(label) => {
+            AppEvent::Opened { path, text } => {
                 self.activity = None;
+                self.push_snapshot();
+                self.redo_stack.clear();
+                self.buffer.set_text(text.trim_end_matches('\n'));
+                self.buffer.row = 0;
+                self.buffer.col = 0;
+                self.generation = self.generation.wrapping_add(1);
+                self.ghost = None;
+                self.file_path = Some(PathBuf::from(&path));
+                self.status = format!("✓ Geöffnet: {path} · Ctrl+Z stellt den alten Puffer wieder her");
+                self.notify_text_changed();
+            }
+            AppEvent::Written { path } => {
+                self.activity = None;
+                self.file_path = Some(PathBuf::from(&path));
+                self.status = format!("✓ Geschrieben: {path}");
+            }
+            AppEvent::ModelSwitched { label, cloud } => {
+                self.activity = None;
+                self.cloud = cloud;
                 self.model = label.clone();
                 self.status = format!("✓ Modell: {label}");
             }
+            AppEvent::SkillsLoaded(names) => self.skills = names,
             AppEvent::Error(e) => {
                 self.activity = None;
                 self.status = format!("✖ {e}");
@@ -398,19 +507,23 @@ fn activity_label(cmd: &Command) -> &'static str {
         Command::Summarize => "Fasst zusammen…",
         Command::Todo => "Extrahiert Aufgaben…",
         Command::Expand => "Formuliert aus…",
+        Command::Skill(_) => "Skill läuft…",
         Command::Save(_) => "Speichert…",
         Command::Export { .. } => "Exportiert…",
-        Command::Help | Command::Quit => "",
+        Command::Open(_) => "Lädt…",
+        Command::Write(_) => "Schreibt…",
+        Command::Ghost(_) | Command::Help | Command::Quit => "",
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::mpsc::UnboundedReceiver;
 
-    fn app() -> App {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        App::new(tx)
+    fn app() -> (App, UnboundedReceiver<WorkerMsg>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (App::new(tx), rx)
     }
 
     fn press(app: &mut App, code: KeyCode) {
@@ -421,9 +534,17 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
     }
 
+    fn type_command(app: &mut App, cmd: &str) {
+        ctrl(app, 'p');
+        for c in cmd.chars() {
+            press(app, KeyCode::Char(c));
+        }
+        press(app, KeyCode::Enter);
+    }
+
     #[test]
     fn typing_burst_undoes_as_one_step() {
-        let mut a = app();
+        let (mut a, _rx) = app();
         for c in "abc".chars() {
             press(&mut a, KeyCode::Char(c));
         }
@@ -434,7 +555,7 @@ mod tests {
 
     #[test]
     fn redo_restores_undone_text() {
-        let mut a = app();
+        let (mut a, _rx) = app();
         press(&mut a, KeyCode::Char('x'));
         ctrl(&mut a, 'z');
         assert_eq!(a.buffer.text(), "");
@@ -444,7 +565,7 @@ mod tests {
 
     #[test]
     fn proposal_needs_confirmation_and_is_undoable() {
-        let mut a = app();
+        let (mut a, _rx) = app();
         for c in "alt".chars() {
             press(&mut a, KeyCode::Char(c));
         }
@@ -461,7 +582,7 @@ mod tests {
 
     #[test]
     fn rejected_proposal_leaves_buffer_untouched() {
-        let mut a = app();
+        let (mut a, _rx) = app();
         press(&mut a, KeyCode::Char('a'));
         a.apply_event(AppEvent::Proposal { text: "neu".into(), notice: "Test".into() });
         press(&mut a, KeyCode::Esc);
@@ -472,10 +593,91 @@ mod tests {
 
     #[test]
     fn identical_proposal_skips_review() {
-        let mut a = app();
+        let (mut a, _rx) = app();
         press(&mut a, KeyCode::Char('a'));
         a.apply_event(AppEvent::Proposal { text: "a".into(), notice: "Test".into() });
         assert!(a.review.is_none());
         assert!(a.mode == Mode::Edit);
+    }
+
+    #[test]
+    fn tab_inserts_spaces_without_ghost_and_delete_removes_forward() {
+        let (mut a, _rx) = app();
+        press(&mut a, KeyCode::Tab);
+        assert_eq!(a.buffer.text(), "    ");
+        press(&mut a, KeyCode::Home);
+        press(&mut a, KeyCode::Delete);
+        assert_eq!(a.buffer.text(), "   ");
+    }
+
+    #[test]
+    fn cloud_model_requires_confirmation_before_worker_is_asked() {
+        let (mut a, mut rx) = app();
+        type_command(&mut a, "model claude");
+        assert!(a.status.starts_with("☁"), "erste Anfrage nur warnen: {}", a.status);
+        assert!(
+            !matches!(rx.try_recv(), Ok(WorkerMsg::RunCommand { .. })),
+            "kein RunCommand vor Consent"
+        );
+
+        type_command(&mut a, "model claude");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WorkerMsg::RunCommand { cmd: Command::Model(m), .. }) if m == "claude"
+        ));
+
+        // Lokal braucht nie Consent; erneutes Cloud in derselben Sitzung auch nicht.
+        type_command(&mut a, "model gemma");
+        assert!(matches!(rx.try_recv(), Ok(WorkerMsg::RunCommand { cmd: Command::Model(_), .. })));
+        type_command(&mut a, "model gpt");
+        assert!(matches!(rx.try_recv(), Ok(WorkerMsg::RunCommand { cmd: Command::Model(m), .. }) if m == "gpt"));
+    }
+
+    #[test]
+    fn ghost_toggle_reaches_worker_and_suppresses_suggestions() {
+        let (mut a, mut rx) = app();
+        type_command(&mut a, "ghost off");
+        assert!(matches!(rx.try_recv(), Ok(WorkerMsg::SetGhost(false))));
+        press(&mut a, KeyCode::Char('x'));
+        a.apply_event(AppEvent::Ghost {
+            generation: a.generation,
+            line: 0,
+            original: "x".into(),
+            corrected: "X".into(),
+        });
+        assert!(a.ghost.is_none());
+    }
+
+    #[test]
+    fn write_without_open_file_is_an_error_and_open_sets_path() {
+        let (mut a, mut rx) = app();
+        type_command(&mut a, "write");
+        assert!(a.status.contains("Keine Datei"));
+        assert!(rx.try_recv().is_err());
+
+        a.apply_event(AppEvent::Opened { path: "notes.md".into(), text: "inhalt\n".into() });
+        assert_eq!(a.buffer.text(), "inhalt");
+        assert_eq!(a.file_label(), "notes.md");
+
+        type_command(&mut a, "write");
+        // Opened löst zuerst ein TextChanged aus – das RunCommand folgt danach.
+        let mut found = false;
+        while let Ok(msg) = rx.try_recv() {
+            if matches!(&msg, WorkerMsg::RunCommand { cmd: Command::Write(Some(p)), .. } if p == "notes.md") {
+                found = true;
+            }
+        }
+        assert!(found, "RunCommand Write(notes.md) erwartet");
+    }
+
+    #[test]
+    fn loaded_skills_become_commands() {
+        let (mut a, mut rx) = app();
+        a.apply_event(AppEvent::SkillsLoaded(vec!["simplify".into()]));
+        type_command(&mut a, "simplify");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WorkerMsg::RunCommand { cmd: Command::Skill(s), .. }) if s == "simplify"
+        ));
     }
 }

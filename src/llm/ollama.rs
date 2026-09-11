@@ -45,24 +45,26 @@ pub async fn chat(
         .ok_or_else(|| anyhow!("Ollama: unerwartetes Antwortformat"))
 }
 
+/// Embedding über den aktuellen `/api/embed`-Endpoint (`/api/embeddings`
+/// ist seit Ollama 0.3 deprecated).
 pub async fn embed(
     http: &reqwest::Client,
     base: &str,
     model: &str,
     text: &str,
 ) -> Result<Vec<f32>> {
-    let body = json!({"model": model, "prompt": text});
+    let body = json!({"model": model, "input": text});
     let resp = http
-        .post(format!("{base}/api/embeddings"))
+        .post(format!("{base}/api/embed"))
         .timeout(Duration::from_secs(30))
         .json(&body)
         .send()
         .await?;
     if !resp.status().is_success() {
-        bail!("Ollama embeddings HTTP {}", resp.status());
+        bail!("Ollama embed HTTP {}", resp.status());
     }
     let v: Value = resp.json().await?;
-    let arr = v["embedding"]
+    let arr = v["embeddings"][0]
         .as_array()
         .ok_or_else(|| anyhow!("kein Embedding in Antwort"))?;
     Ok(arr.iter().filter_map(|x| x.as_f64()).map(|x| x as f32).collect())

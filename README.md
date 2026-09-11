@@ -27,7 +27,18 @@ per `/model claude` (bzw. `/model gpt`) wechselst du auf Cloud-Inferenz.
 | `Esc` | Ghost-Vorschlag verwerfen / Command-Bar schließen |
 | `Ctrl+Z` / `Ctrl+Y` | Rückgängig / Wiederholen (auch für KI-Änderungen) |
 | `Ctrl+S` | Puffer ins Wiki speichern (mit Auto-Titel/-Tags/-Summary) |
+| `Tab` (ohne Ghost) / `Entf` | 4 Leerzeichen einfügen / vorwärts löschen |
 | `Ctrl+Q` | Beenden |
+
+`vibe notizen.md` öffnet eine Datei direkt (fehlt sie, wird sie beim ersten
+`/write` angelegt). In jeder Tipp-Pause sichert der Editor den Puffer nach
+`.vibe/autosave.md`; nach einem Absturz wird er beim nächsten Start
+automatisch wiederhergestellt.
+
+**Datenpfad-Badge:** Die Statuszeile zeigt permanent `🔒 LOKAL` oder
+`☁ CLOUD`. Der erste Wechsel auf ein Cloud-Modell pro Sitzung muss durch
+Wiederholen von `/model …` bestätigt werden – vorher verlässt kein Zeichen
+das Gerät. Ghost-Text und Embeddings laufen *immer* lokal.
 
 **Transformationen ersetzen den Puffer nie direkt:** Das Ergebnis von
 `/lang`, `/style`, `/summarize`, `/todo` und `/expand` erscheint als
@@ -47,7 +58,26 @@ ist per `Ctrl+Z` widerrufbar.
 | `/model gemma\|claude\|gpt` | Modell zur Laufzeit wechseln |
 | `/save [titel]` | In das Wiki speichern |
 | `/export pdf\|docx\|html\|md\|txt [datei]` | Puffer exportieren |
+| `/open <datei>` / `/write [datei]` | Datei laden / Puffer in Datei schreiben |
+| `/ghost on\|off` | Ghost-Text-Korrekturen an-/abschalten |
+| `/<skill>` | Eigener Prompt-Skill (siehe unten) |
 | `/help`, `/quit` | Hilfe / Beenden |
+
+### Eigene Skills
+
+Jede Markdown-Datei in `~/.config/vibe/skills/`, `./.vibe/skills/` oder
+`$VIBE_SKILLS_DIR` wird zum Befehl `/<dateiname>`. Der Inhalt ist der
+System-Prompt, der auf den Puffer angewendet wird – das Ergebnis erscheint
+wie jede Transformation als Diff-Vorschau. Optionales Frontmatter liefert
+die Beschreibung für `/help`:
+
+```markdown
+---
+description: "Entschärft passiv-aggressive Formulierungen"
+---
+Rewrite the text so it stays factual and friendly. Keep the language,
+remove blame and sarcasm, return only the rewritten text.
+```
 
 **Export:** Word (docx), HTML, Markdown und Text entstehen komplett offline
 in-process. PDF delegiert an ein installiertes [pandoc](https://pandoc.org)
@@ -60,10 +90,13 @@ aktuellen Verzeichnis (bzw. `VIBE_EXPORT_DIR`) angelegt.
 | Variable | Default | Zweck |
 |---|---|---|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Lokale Inferenz-Engine |
-| `VIBE_GEMMA_MODEL` | `gemma3` | Lokales Korrektur-/Skill-Modell |
-| `VIBE_EMBED_MODEL` | `nomic-embed-text` | Embeddings für das Wiki-RAG |
+| `VIBE_GEMMA_MODEL` | `gemma3` | Lokales Skill-Modell |
+| `VIBE_GHOST_MODEL` | = `VIBE_GEMMA_MODEL` | Kleineres/schnelleres Modell nur für Ghost-Text (z. B. `gemma3:1b`) |
+| `VIBE_EMBED_MODEL` | `nomic-embed-text` | Embeddings für das Wiki-RAG (nomic-Task-Präfixe werden automatisch gesetzt) |
 | `VIBE_WIKI_DIR` | `./vibe-wiki` | Ablageort der Wiki-Einträge |
+| `VIBE_CACHE_DIR` | `./.vibe` | Embedding-Cache (`embeddings.json`) und Autosave |
 | `VIBE_EXPORT_DIR` | `.` | Zielordner für `/export` ohne Dateiname |
+| `VIBE_SKILLS_DIR` | – | Zusätzlicher Skill-Ordner |
 | `ANTHROPIC_API_KEY` | – | aktiviert `/model claude` |
 | `OPENAI_API_KEY` | – | aktiviert `/model gpt` |
 
@@ -112,8 +145,13 @@ aufgebaut – die Dateien selbst bleiben die einzige Source of Truth.
 ## Roadmap
 
 - [x] Diff-Vorschau + Undo/Redo für alle KI-Transformationen
+- [x] Persistenter Embedding-Cache (`.vibe/embeddings.json`)
+- [x] Eigene Prompt-Skills aus Markdown-Dateien
+- [x] Datei öffnen/schreiben, Autosave + Crash-Recovery
+- [x] Datenpfad-Badge (🔒/☁) und Cloud-Consent
 - [ ] Inline-Ghost-Rendering direkt in der Zeile (statt Vorschlags-Panel)
+- [ ] Streaming-Antworten für Cloud-Transformationen (Fortschritt sichtbar)
+- [ ] Token-/Kostenzähler pro Sitzung in der Statuszeile
 - [ ] Context Sniffer für Einfügen aus der Zwischenablage (Bracketed Paste)
-- [ ] Persistenter Embedding-Cache (`.vibe/index.json`) statt Rebuild beim Start
-- [ ] Streaming-Antworten für Cloud-Transformationen
-- [ ] Plugin-Schnittstelle für eigene Skills
+- [ ] Hybrid-Retrieval (BM25 + Embeddings) und Re-Ranking für das Wiki
+- [ ] PII-Prüfung vor Cloud-Calls (lokal, per Gemma)

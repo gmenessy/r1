@@ -17,6 +17,8 @@ pub enum WorkerMsg {
     },
     /// Ein Befehl aus der Command-Bar, zusammen mit dem aktuellen Puffer.
     RunCommand { cmd: Command, text: String },
+    /// Ghost-Text-Inferenz an-/abschalten.
+    SetGhost(bool),
     Shutdown,
 }
 
@@ -43,8 +45,14 @@ pub enum AppEvent {
     Saved { path: String },
     /// Puffer exportiert (pdf/docx/html/md/txt).
     Exported { path: String },
-    /// Modellwechsel bestätigt.
-    ModelSwitched(String),
+    /// Datei geladen – ersetzt den Puffer (mit Undo-Snapshot).
+    Opened { path: String, text: String },
+    /// Puffer in Datei geschrieben.
+    Written { path: String },
+    /// Modellwechsel bestätigt; `cloud` steuert das 🔒/☁ -Badge.
+    ModelSwitched { label: String, cloud: bool },
+    /// Namen der geladenen Custom-Skills (für Autocomplete/Parser).
+    SkillsLoaded(Vec<String>),
     /// Fehler – Puffer bleibt unangetastet (Stabilitäts-NFR).
     Error(String),
 }

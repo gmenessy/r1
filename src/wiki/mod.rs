@@ -5,6 +5,7 @@
 //! (Embeddings) ist abgeleitet und jederzeit rekonstruierbar – siehe
 //! docs/ARCHITECTURE.md.
 
+pub mod cache;
 pub mod index;
 
 use anyhow::{Context, Result};

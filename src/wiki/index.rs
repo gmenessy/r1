@@ -87,7 +87,9 @@ impl Index {
             .collect();
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        let threshold = if query_embedding.is_some() { 0.45 } else { 0.08 };
+        // Embedding-Modelle wie nomic haben eine hohe Grund-Ähnlichkeit
+        // (~0.5 auch für Unverwandtes) – lieber leeres Panel als Rauschen.
+        let threshold = if query_embedding.is_some() { 0.6 } else { 0.08 };
         scored
             .into_iter()
             .take(3)
